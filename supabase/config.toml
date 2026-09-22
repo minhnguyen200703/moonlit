@@ -1,0 +1,19 @@
+project_id = "moonlit"
+
+[auth]
+enabled = true
+site_url = "moonlit://auth-callback"
+enable_signup = true
+enable_anonymous_sign_ins = true
+
+[auth.rate_limit]
+anonymous_users = 30
+
+[db]
+major_version = 15
+
+[studio]
+enabled = true
+
+[functions.pairing]
+verify_jwt = true

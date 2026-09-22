@@ -1,0 +1,8 @@
+// Safe-to-commit template. Copy this file to Supabase.local.xcconfig and
+// replace both placeholders. The optional include applies local overrides.
+// $() prevents // in an HTTPS URL from being parsed as an xcconfig comment.
+
+SUPABASE_URL = https:$()/YOUR_PROJECT_REF.supabase.co
+SUPABASE_PUBLISHABLE_KEY = YOUR_PUBLISHABLE_KEY
+
+#include? "Supabase.local.xcconfig"

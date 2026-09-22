@@ -1,0 +1,48 @@
+name: Moonlit
+options:
+  bundleIdPrefix: com.minh
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    exactVersion: 2.55.1
+configFiles:
+  Debug: Config/Supabase.example.xcconfig
+  Release: Config/Supabase.example.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
+targets:
+  Moonlit:
+    type: application
+    platform: iOS
+    sources:
+      - path: Moonlit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.minh.moonlit
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Moonlit
+        INFOPLIST_KEY_NSCameraUsageDescription: Moonlit uses the camera so you can share a little moment with your person.
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Moonlit uses your photo library as a camera fallback in the Simulator.
+        INFOPLIST_KEY_SUPABASE_URL: $(SUPABASE_URL)
+        INFOPLIST_KEY_SUPABASE_PUBLISHABLE_KEY: $(SUPABASE_PUBLISHABLE_KEY)
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - package: Supabase
+    scheme:
+      testTargets:
+        - MoonlitTests
+  MoonlitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MoonlitTests
+    dependencies:
+      - target: Moonlit

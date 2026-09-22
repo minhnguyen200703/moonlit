@@ -1,0 +1,32 @@
+.DS_Store
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Local application configuration
+Config/Supabase.local.xcconfig
+.env
+.env.*
+!.env.example
+
+# Supabase CLI state
+supabase/.temp/
+supabase/.branches/
+
+# Apple signing material
+*.p8
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# Temporary restoration workspace
+.restore-v01/
+.vendor-check/
+.npm-cache/
+.npm-prefix/
+.deno-cache/
