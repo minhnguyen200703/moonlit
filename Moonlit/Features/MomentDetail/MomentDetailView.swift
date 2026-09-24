@@ -5,6 +5,8 @@ struct MomentDetailView: View {
     let moment: Moment
     @State private var replies: [Reply] = []
     @State private var draft = ""
+    @State private var draftID = UUID()
+    @State private var attemptedBody: String?
     @State private var isSending = false
     @State private var errorMessage: String?
 
@@ -25,6 +27,13 @@ struct MomentDetailView: View {
                 Text("\(displayedMoment.createdByCurrentUser ? "You" : "Your person") · \(displayedMoment.capturedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(MoonlitTheme.wine)
+
+                if displayedMoment.deliveryState == .failed {
+                    Button("Retry sending this moment") {
+                        Task { await store.retry(moment: displayedMoment) }
+                    }
+                    .buttonStyle(.bordered)
+                }
 
                 Button {
                     Task { await store.react(to: moment.id) }
@@ -94,11 +103,15 @@ struct MomentDetailView: View {
 
     private func send() async {
         let body = draft
+        if let attemptedBody, attemptedBody != body { draftID = UUID() }
+        attemptedBody = body
         isSending = true
         defer { isSending = false }
         do {
-            try await store.sendReply(to: moment.id, body: body)
+            try await store.sendReply(id: draftID, to: moment.id, body: body)
             draft = ""
+            draftID = UUID()
+            attemptedBody = nil
             await reload()
         } catch {
             errorMessage = error.localizedDescription

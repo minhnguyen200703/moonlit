@@ -27,10 +27,14 @@ struct SettingsView: View {
                 if !status.isEmpty { Text(status).font(.caption).foregroundStyle(MoonlitTheme.wine) }
             }
 
-            Section("Prototype status") {
+            Section("Connection") {
                 Label(store.couple?.isActive == true ? "Paired privately" : "Waiting for your person", systemImage: "person.2.fill")
                 Label("Photos use a private Supabase bucket", systemImage: "lock.fill")
-                Label(store.isSyncing ? "Synchronizing" : "Shared sky is up to date", systemImage: "arrow.triangle.2.circlepath")
+                Label(
+                    store.isSyncing ? "Synchronizing" :
+                        (store.lastRefreshSucceeded ? "Shared sky is up to date" : "Refresh needed"),
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
             }
 
             if store.legacyImportCount > 0 {

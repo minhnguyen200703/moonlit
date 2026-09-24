@@ -18,6 +18,7 @@ final class MomentStore: ObservableObject {
     @Published private(set) var invitation: PairingInvitation?
     @Published private(set) var isPairing = false
     @Published private(set) var isSyncing = false
+    @Published private(set) var lastRefreshSucceeded = false
     @Published private(set) var legacyImportCount = 0
     @Published private(set) var syncRevision = 0
     @Published var transientError: String?
@@ -27,6 +28,8 @@ final class MomentStore: ObservableObject {
     private var gateway: SupabaseGateway?
     private var currentUserID: UUID?
     private var hasStarted = false
+    private var activeUploads: Set<UUID> = []
+    private var refreshQueued = false
 
     init(localCache: LocalMomentCache = LocalMomentCache()) {
         self.localCache = localCache
@@ -38,13 +41,19 @@ final class MomentStore: ObservableObject {
         guard force || !hasStarted else { return }
         hasStarted = true
         appState = .loading
+        lastRefreshSucceeded = false
         do {
+            await gateway?.stopRealtime()
             moments = try await localCache.load()
             updateLegacyImportCount()
             let configuration = try AppConfiguration.load()
             let gateway = SupabaseGateway(configuration: configuration)
             self.gateway = gateway
             let userID = try await gateway.ensureSession()
+            if currentUserID != userID {
+                imageCache.removeAllObjects()
+                invitation = nil
+            }
             currentUserID = userID
             try await reloadCouple(userID: userID)
         } catch let error as ConfigurationError {
@@ -135,7 +144,7 @@ final class MomentStore: ObservableObject {
         }
         do {
             let adopted = try await localCache.adoptLegacyMoments(userID: currentUserID, coupleID: couple.id)
-            moments = try await localCache.load()
+            moments = await localCache.visibleMoments(for: currentUserID, in: couple.id)
             updateLegacyImportCount()
             for moment in adopted { await upload(moment) }
         } catch {
@@ -144,6 +153,7 @@ final class MomentStore: ObservableObject {
     }
 
     func image(for moment: Moment) async -> UIImage? {
+        guard moments.contains(where: { $0.id == moment.id }) else { return nil }
         if let cached = imageCache.object(forKey: moment.id as NSUUID) { return cached }
         do {
             if let data = try await localCache.imageData(for: moment), let image = UIImage(data: data) {
@@ -181,30 +191,48 @@ final class MomentStore: ObservableObject {
         return try await gateway.fetchReplies(momentID: momentID, currentUserID: currentUserID)
     }
 
-    func sendReply(to momentID: UUID, body: String) async throws {
+    func sendReply(id: UUID, to momentID: UUID, body: String) async throws {
         guard let gateway else { throw MomentStoreError.notConfigured }
         let clean = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (1...2_000).contains(clean.count) else { throw MomentStoreError.invalidReply }
-        try await gateway.createReply(id: UUID(), momentID: momentID, body: clean)
+        try await gateway.createReply(id: id, momentID: momentID, body: clean)
     }
 
     func refreshMoments() async {
-        guard !isSyncing, let gateway, let couple, couple.isActive, let currentUserID else { return }
+        guard let gateway, let couple, couple.isActive, let currentUserID else { return }
+        if isSyncing {
+            refreshQueued = true
+            return
+        }
         isSyncing = true
         defer { isSyncing = false }
-        do {
-            let remote = try await gateway.fetchMoments(coupleID: couple.id, currentUserID: currentUserID)
-            moments = try await localCache.replace(with: remote)
-            updateLegacyImportCount()
-            syncRevision &+= 1
-        } catch {
-            transientError = "Moonlit could not refresh your shared sky."
-        }
+        repeat {
+            refreshQueued = false
+            do {
+                let remote = try await gateway.fetchMoments(coupleID: couple.id, currentUserID: currentUserID)
+                guard self.currentUserID == currentUserID, self.couple?.id == couple.id else { return }
+                let refreshed = try await localCache.replace(with: remote, for: currentUserID, in: couple.id)
+                guard self.currentUserID == currentUserID, self.couple?.id == couple.id else { return }
+                moments = refreshed
+                updateLegacyImportCount()
+                lastRefreshSucceeded = true
+                syncRevision &+= 1
+            } catch {
+                lastRefreshSucceeded = false
+                transientError = "Moonlit could not refresh your shared sky."
+            }
+        } while refreshQueued
     }
 
     private func reloadCouple(userID: UUID) async throws {
         guard let gateway else { throw MomentStoreError.notConfigured }
         couple = try await gateway.fetchCouple(for: userID)
+        if let couple {
+            moments = await localCache.visibleMoments(for: userID, in: couple.id)
+        } else {
+            moments = []
+        }
+        updateLegacyImportCount()
         guard let couple else {
             appState = .pairing
             return
@@ -222,30 +250,55 @@ final class MomentStore: ObservableObject {
             transientError = "Live updates are temporarily unavailable. Pull to refresh while Moonlit reconnects."
         }
         await refreshMoments()
-        let pending = await localCache.pendingMoments()
-        for moment in pending where moment.coupleID != nil { await upload(moment) }
+        await resumePendingUploads()
+    }
+
+    func resumePendingUploads() async {
+        guard let currentUserID, let couple, couple.isActive else { return }
+        if let gateway, !gateway.hasRealtimeSubscription {
+            do {
+                try await gateway.startRealtime(coupleID: couple.id) { [weak self] in
+                    await self?.refreshMoments()
+                }
+            } catch {
+                transientError = "Live updates are temporarily unavailable. Pull to refresh while Moonlit reconnects."
+            }
+        }
+        let pending = await localCache.pendingMoments(for: currentUserID, in: couple.id)
+        for moment in pending { await upload(moment) }
     }
 
     private func upload(_ moment: Moment) async {
-        guard let gateway else { return }
+        guard let gateway, let currentUserID, let couple, couple.isActive,
+              moment.authorID == currentUserID, moment.coupleID == couple.id else {
+            transientError = "This moment belongs to another Moonlit session and will stay on this iPhone."
+            return
+        }
+        guard activeUploads.insert(moment.id).inserted else { return }
+        defer { activeUploads.remove(moment.id) }
         do {
             guard let data = try await localCache.imageData(for: moment) else {
                 throw MomentStoreError.missingImage
             }
             var uploading = moment
             uploading.deliveryState = .uploading
-            moments = try await localCache.update(uploading)
+            _ = try await localCache.update(uploading)
+            moments = await localCache.visibleMoments(for: currentUserID, in: couple.id)
             try await gateway.upload(moment: uploading, imageData: data)
+            guard self.currentUserID == currentUserID, self.couple?.id == couple.id else { return }
             var synced = uploading
             synced.deliveryState = .synced
-            moments = try await localCache.update(synced)
+            _ = try await localCache.update(synced)
+            moments = await localCache.visibleMoments(for: currentUserID, in: couple.id)
             updateLegacyImportCount()
             await refreshMoments()
         } catch {
             var failed = moment
             failed.deliveryState = .failed
-            if let updated = try? await localCache.update(failed) { moments = updated }
-            transientError = "A moment is saved on this iPhone and will retry when you ask."
+            if (try? await localCache.update(failed)) != nil {
+                moments = await localCache.visibleMoments(for: currentUserID, in: couple.id)
+            }
+            transientError = "This moment is saved on this iPhone. Moonlit will retry when you return, or you can tap Retry."
         }
     }
 

@@ -29,7 +29,7 @@ struct TimelineView: View {
                                     Text(moment.capturedAt.formatted(date: .abbreviated, time: .shortened))
                                         .font(.caption2)
                                     if moment.deliveryState == .failed {
-                                        Label("Tap to retry from Home", systemImage: "exclamationmark.circle")
+                                        Label("Tap to retry", systemImage: "exclamationmark.circle")
                                             .font(.caption2)
                                     }
                                 }

@@ -2,6 +2,8 @@
 
 Moonlit is a private, moon-themed photo diary for two people. Phase 2 adds anonymous Supabase authentication, invitation-code pairing, private photos, synchronized moments, reactions, and replies while retaining the v0.1 capture flow and visual design.
 
+Current feature checkboxes and remaining verification gates: [Phase 2 status](Docs/Phase-2-Status.md). The source implementation is committed; shared features still need a macOS build and Supabase/two-device validation before release.
+
 ## Phase 2 behavior
 
 - Anonymous Supabase session restored on launch; a new identity is created only when no session exists.
@@ -71,7 +73,7 @@ Pairing mutations run through the Edge Function. Its backend-only RPCs are expli
 
 ## Build on macOS
 
-The project targets iOS 17 and pins `supabase-swift` 2.55.1.
+The project targets iOS 17 and pins `supabase-swift` 2.55.1. That package declares `swift-tools-version: 6.1`, so use Xcode 16.3 or newer to resolve it.
 
 ```bash
 brew install xcodegen

@@ -371,6 +371,10 @@ begin
     insert into public.couple_members(couple_id, user_id, slot, display_name)
       values (target_couple, p_user_id, 1, cleaned_name);
   else
+    -- Redemption locks the invitation before the couple; rotation uses the same order.
+    perform 1 from private.couple_invitations i
+      where i.couple_id = target_couple and i.consumed_at is null and i.revoked_at is null
+      for update;
     select c.status, c.created_by into target_status, target_creator
       from public.couples c where c.id = target_couple for update;
     if target_status <> 'waiting' or target_creator <> p_user_id then
@@ -519,8 +523,13 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
-declare target_couple uuid := coalesce(new.couple_id, old.couple_id);
+declare target_couple uuid;
 begin
+  if tg_op = 'DELETE' then
+    target_couple := old.couple_id;
+  else
+    target_couple := new.couple_id;
+  end if;
   perform realtime.send('{}'::jsonb, 'diary_changed', 'couple:' || target_couple::text, true);
   return null;
 end;

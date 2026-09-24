@@ -7,6 +7,8 @@ final class SupabaseGateway {
     private var realtimeChannel: RealtimeChannelV2?
     private var realtimeTask: Task<Void, Never>?
 
+    var hasRealtimeSubscription: Bool { realtimeChannel != nil }
+
     init(configuration: AppConfiguration) {
         client = SupabaseClient(
             supabaseURL: configuration.supabaseURL,
@@ -69,28 +71,48 @@ final class SupabaseGateway {
     }
 
     func fetchMoments(coupleID: UUID, currentUserID: UUID) async throws -> [Moment] {
-        async let momentsRequest: [MomentDTO] = try await client
-            .from("moments")
-            .select()
-            .eq("couple_id", value: coupleID.uuidString)
-            .eq("upload_state", value: "ready")
-            .order("captured_at", ascending: false)
-            .limit(100)
-            .execute()
-            .value
-        async let reactionsRequest: [ReactionDTO] = try await client
-            .from("reactions")
-            .select()
-            .eq("couple_id", value: coupleID.uuidString)
-            .eq("is_active", value: true)
-            .execute()
-            .value
+        let pageSize = 200
+        var momentDTOs: [MomentDTO] = []
+        var offset = 0
+        while true {
+            let page: [MomentDTO] = try await client
+                .from("moments")
+                .select()
+                .eq("couple_id", value: coupleID.uuidString)
+                .eq("upload_state", value: "ready")
+                .order("captured_at", ascending: false)
+                .order("id", ascending: false)
+                .range(from: offset, to: offset + pageSize - 1)
+                .execute()
+                .value
+            momentDTOs.append(contentsOf: page)
+            if page.count < pageSize { break }
+            offset += pageSize
+        }
 
-        let (momentDTOs, reactions) = try await (momentsRequest, reactionsRequest)
+        var reactions: [ReactionDTO] = []
+        offset = 0
+        while true {
+            let page: [ReactionDTO] = try await client
+                .from("reactions")
+                .select()
+                .eq("couple_id", value: coupleID.uuidString)
+                .eq("is_active", value: true)
+                .order("moment_id", ascending: true)
+                .order("user_id", ascending: true)
+                .range(from: offset, to: offset + pageSize - 1)
+                .execute()
+                .value
+            reactions.append(contentsOf: page)
+            if page.count < pageSize { break }
+            offset += pageSize
+        }
+
+        let reactionsByMoment = Dictionary(grouping: reactions, by: \.momentID)
         return momentDTOs.compactMap { dto in
             guard let capturedAt = DateParser.date(dto.capturedAt),
                   let createdAt = DateParser.date(dto.createdAt) else { return nil }
-            let momentReactions = reactions.filter { $0.momentID == dto.id }
+            let momentReactions = reactionsByMoment[dto.id] ?? []
             let ownReaction = momentReactions.first(where: { $0.userID == currentUserID })
             let reaction = momentReactions.first(where: { $0.userID != currentUserID })?.emoji
                 ?? ownReaction?.emoji
@@ -194,7 +216,12 @@ final class SupabaseGateway {
             options.isPrivate = true
         }
         let stream = channel.broadcastStream(event: "diary_changed")
-        try await channel.subscribeWithError()
+        do {
+            try await channel.subscribeWithError()
+        } catch {
+            await client.removeChannel(channel)
+            throw error
+        }
         realtimeChannel = channel
         realtimeTask = Task { @MainActor in
             for await _ in stream {

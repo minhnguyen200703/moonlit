@@ -94,7 +94,7 @@ actor LocalMomentCache {
         }
     }
 
-    func replace(with remote: [Moment]) throws -> [Moment] {
+    func replace(with remote: [Moment], for userID: UUID, in coupleID: UUID) throws -> [Moment] {
         let localByID = Dictionary(uniqueKeysWithValues: moments.map { ($0.id, $0) })
         let mergedRemote = remote.map { remoteMoment in
             guard let local = localByID[remoteMoment.id],
@@ -118,11 +118,19 @@ actor LocalMomentCache {
             )
         }
         let remoteIDs = Set(remote.map(\.id))
-        let pending = moments.filter { $0.deliveryState != .synced && !remoteIDs.contains($0.id) }
-        let candidate = (mergedRemote + pending).sorted { $0.capturedAt > $1.capturedAt }
+        let pending = moments.filter {
+            $0.deliveryState != .synced && !remoteIDs.contains($0.id)
+                && ($0.coupleID == nil || ($0.coupleID == coupleID && $0.authorID == userID))
+        }
+        let otherIdentity = moments.filter {
+            $0.coupleID != nil && !remoteIDs.contains($0.id)
+                && ($0.coupleID != coupleID ||
+                    ($0.authorID != userID && $0.deliveryState != .synced))
+        }
+        let candidate = (mergedRemote + pending + otherIdentity).sorted { $0.capturedAt > $1.capturedAt }
         try persist(candidate)
         moments = candidate
-        return candidate
+        return visibleMoments(for: userID, in: coupleID)
     }
 
     func update(_ updated: Moment) throws -> [Moment] {
@@ -132,9 +140,17 @@ actor LocalMomentCache {
         return candidate
     }
 
-    func pendingMoments() -> [Moment] {
+    func pendingMoments(for userID: UUID, in coupleID: UUID) -> [Moment] {
         moments.filter {
-            $0.deliveryState == .queued || $0.deliveryState == .uploading || $0.deliveryState == .failed
+            ($0.deliveryState == .queued || $0.deliveryState == .uploading || $0.deliveryState == .failed)
+                && $0.authorID == userID && $0.coupleID == coupleID
+        }
+    }
+
+    func visibleMoments(for userID: UUID, in coupleID: UUID) -> [Moment] {
+        moments.filter {
+            $0.coupleID == nil || ($0.coupleID == coupleID &&
+                ($0.deliveryState == .synced || $0.authorID == userID))
         }
     }
 

@@ -14,7 +14,12 @@ struct MoonlitApp: App {
                 .environmentObject(store)
                 .preferredColorScheme(.light)
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { Task { await store.refreshMoments() } }
+                    if phase == .active {
+                        Task {
+                            await store.refreshMoments()
+                            await store.resumePendingUploads()
+                        }
+                    }
                 }
         }
     }

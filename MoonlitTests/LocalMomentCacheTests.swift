@@ -50,7 +50,9 @@ final class LocalMomentCacheTests: XCTestCase {
 
         let reloaded = LocalMomentCache(rootURL: root)
         _ = try await reloaded.load()
-        let pending = await reloaded.pendingMoments()
+        let userID = try XCTUnwrap(draft.authorID)
+        let coupleID = try XCTUnwrap(draft.coupleID)
+        let pending = await reloaded.pendingMoments(for: userID, in: coupleID)
 
         XCTAssertEqual(pending.map(\.id), [draft.id])
     }
@@ -76,5 +78,46 @@ final class LocalMomentCacheTests: XCTestCase {
         XCTAssertEqual(adopted.first?.authorID, userID)
         XCTAssertEqual(adopted.first?.coupleID, coupleID)
         XCTAssertEqual(adopted.first?.deliveryState, .queued)
+    }
+
+    func testCachedDraftsStayWithTheirAnonymousIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = LocalMomentCache(rootURL: root)
+        _ = try await cache.load()
+        let ownerID = UUID()
+        let ownerCoupleID = UUID()
+        let otherID = UUID()
+        let otherCoupleID = UUID()
+        let draft = try await cache.saveDraft(
+            id: UUID(), imageData: Data([1, 2, 3]), note: "owner only",
+            userID: ownerID, coupleID: ownerCoupleID
+        )
+
+        let otherVisible = try await cache.replace(with: [], for: otherID, in: otherCoupleID)
+        let otherPending = await cache.pendingMoments(for: otherID, in: otherCoupleID)
+        let ownerVisible = await cache.visibleMoments(for: ownerID, in: ownerCoupleID)
+
+        XCTAssertTrue(otherVisible.isEmpty)
+        XCTAssertTrue(otherPending.isEmpty)
+        XCTAssertEqual(ownerVisible.map(\.id), [draft.id])
+    }
+
+    func testRefreshRemovesDeletedPartnerMoment() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = LocalMomentCache(rootURL: root)
+        _ = try await cache.load()
+        let userID = UUID()
+        let coupleID = UUID()
+        let partnerMoment = Moment(
+            coupleID: coupleID, authorID: UUID(), note: "from partner",
+            storagePath: "some/private/path.jpg", deliveryState: .synced
+        )
+        _ = try await cache.replace(with: [partnerMoment], for: userID, in: coupleID)
+
+        let afterDeletion = try await cache.replace(with: [], for: userID, in: coupleID)
+
+        XCTAssertTrue(afterDeletion.isEmpty)
     }
 }
